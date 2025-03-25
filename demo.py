@@ -142,6 +142,31 @@ def list_order_book(currency_pair="ETH_USDT", depth=10):
     except ApiException as e:
         print(f"调用SpotApi时出现异常: {e}")
 
+def format_timestamp(timestamp, is_ms=False):
+    """
+    将时间戳转换为人类可读的格式
+    
+    Args:
+        timestamp (int/float): Unix时间戳
+        is_ms (bool): 时间戳是否为毫秒级
+    
+    Returns:
+        str: 格式化的时间字符串，格式为 'YYYY-MM-DD HH:MM:SS'
+    """
+    if timestamp is None:
+        return 'N/A'
+    
+    try:
+        # 如果是毫秒级时间戳，转换为秒级
+        if is_ms:
+            timestamp = int(timestamp) / 1000
+        # 转换时间戳为本地时间
+        time_struct = time.localtime(int(timestamp))
+        # 格式化时间字符串
+        return time.strftime('%Y-%m-%d %H:%M:%S', time_struct)
+    except (ValueError, TypeError):
+        return 'Invalid timestamp'
+
 def get_market_trades(currency_pair="ETH_USDT", limit=20):
     """
     查询特定交易对的历史成交记录
@@ -169,7 +194,9 @@ def get_market_trades(currency_pair="ETH_USDT", limit=20):
         print("\n成交记录:")
         for trade in trades:
             side = "买入" if trade.side == "buy" else "卖出"
-            print(f"ID: {trade.id}, 方向: {side}, 价格: {trade.price}, 数量: {trade.amount}, 时间: {trade.create_time_ms}")
+            create_time = format_timestamp(trade.create_time_ms, is_ms=True)
+            print(f"ID: {trade.id}, 方向: {side}, 价格: {trade.price}, "
+                  f"数量: {trade.amount}, 时间: {create_time}")
     
     except GateApiException as ex:
         print(f"Gate API异常, 标签: {ex.label}, 消息: {ex.message}")
@@ -204,7 +231,9 @@ def get_personal_trades(currency_pair="ETH_USDT", limit=10):
             print("\n个人成交记录:")
             for trade in my_trades:
                 side = "买入" if trade.side == "buy" else "卖出"
-                print(f"订单ID: {trade.order_id}, 方向: {side}, 价格: {trade.price}, 数量: {trade.amount}, 手续费: {trade.fee}, 时间: {trade.create_time}")
+                create_time = format_timestamp(trade.create_time)
+                print(f"订单ID: {trade.order_id}, 方向: {side}, 价格: {trade.price}, "
+                      f"数量: {trade.amount}, 手续费: {trade.fee}, 时间: {create_time}")
         else:
             print(f"在 {currency_pair} 没有个人成交记录")
     
@@ -269,7 +298,7 @@ def create_order(currency_pair="ETH_USDT", side="buy", amount="0.001", price=Non
         print(f"数量: {created_order.amount}")
         if created_order.price:
             print(f"价格: {created_order.price}")
-        print(f"创建时间: {created_order.create_time}")
+        print(f"创建时间: {format_timestamp(created_order.create_time)}")
         print(f"状态: {created_order.status}")
         
         return created_order
@@ -355,20 +384,40 @@ def list_open_orders(currency_pair=None):
             print(f"获取 {currency_pair} 未完成订单...")
             # 如果指定了交易对，使用list_orders查询特定交易对的订单
             open_orders = spot_api.list_orders(currency_pair, status="open")
+            total_orders = len(open_orders)
+            
+            print(f"未完成订单数: {total_orders}")
+            
+            # 显示未完成订单
+            if open_orders:
+                print("\n未完成订单列表:")
+                for order in open_orders:
+                    create_time = format_timestamp(order.create_time)
+                    print(f"订单ID: {order.id}, 交易对: {order.currency_pair}, "
+                          f"方向: {order.side}, 数量: {order.amount}, "
+                          f"价格: {order.price}, 创建时间: {create_time}")
+            else:
+                print(f"在 {currency_pair} 没有未完成的订单")
         else:
             print("获取所有交易对的未完成订单...")
             # 否则使用list_all_open_orders查询所有交易对的未完成订单
-            open_orders = spot_api.list_all_open_orders()
-        
-        print(f"未完成订单数: {len(open_orders)}")
-        
-        # 显示未完成订单
-        if open_orders:
-            print("\n未完成订单列表:")
-            for order in open_orders:
-                print(f"订单ID: {order.id}, 交易对: {order.currency_pair}, 方向: {order.side}, 数量: {order.amount}, 价格: {order.price}, 创建时间: {order.create_time}")
-        else:
-            print("没有未完成的订单")
+            all_open_orders = spot_api.list_all_open_orders()
+            
+            total_orders = sum(pair_orders.total for pair_orders in all_open_orders)
+            print(f"未完成订单总数: {total_orders}")
+            
+            # 显示每个交易对的未完成订单
+            if all_open_orders:
+                print("\n未完成订单列表:")
+                for pair_orders in all_open_orders:
+                    print(f"\n交易对 {pair_orders.currency_pair} 的订单 (共 {pair_orders.total} 个):")
+                    for order in pair_orders.orders:
+                        create_time = format_timestamp(order.create_time)
+                        print(f"订单ID: {order.id}, 方向: {order.side}, "
+                              f"数量: {order.amount}, 价格: {order.price}, "
+                              f"创建时间: {create_time}")
+            else:
+                print("没有未完成的订单")
     
     except GateApiException as ex:
         print(f"Gate API异常, 标签: {ex.label}, 消息: {ex.message}")
@@ -405,7 +454,8 @@ def monitor_order_book_changes(currency_pair="ETH_USDT", interval=5, iterations=
             best_ask = order_book.asks[0] if order_book.asks else None
             best_bid = order_book.bids[0] if order_book.bids else None
             
-            print(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            current_time = time.strftime('%Y-%m-%d %H:%M:%S')
+            print(f"时间: {current_time}")
             if best_ask:
                 print(f"卖一: 价格 {best_ask[0]}, 数量 {best_ask[1]}")
             if best_bid:
