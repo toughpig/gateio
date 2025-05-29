@@ -1,2 +1,4 @@
 .env
 gateapi-python
+__pycache__
+*.log
