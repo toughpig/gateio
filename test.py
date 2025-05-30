@@ -128,7 +128,7 @@ def test_market_data_collection():
         config_manager = ConfigManager()
         
         # 获取配置
-        trading_pairs = config_manager.get_trading_pairs()[:3]  # 只测试前3个交易对
+        trading_pairs = config_manager.get_trading_pairs() # 只测试前3个交易对
         intervals = config_manager.get_intervals()[:3]  # 只测试前3个时间间隔
         
         print(f"测试交易对: {trading_pairs}")
@@ -141,7 +141,7 @@ def test_market_data_collection():
             print(f"{pair}: 价格={ticker.last_price}, 24h涨跌={ticker.change_24h:.2%}")
         
         print_subsection("订单簿数据测试")
-        orderbooks = manager.market_collector.get_orderbook_data(trading_pairs[:2])  # 只测试前2个
+        orderbooks = manager.market_collector.get_orderbook_data(trading_pairs)  # 只测试前2个
         print(f"获取到 {len(orderbooks)} 个交易对的订单簿数据")
         for pair, orderbook in orderbooks.items():
             print(f"{pair}: 买单数量={len(orderbook.bids)}, 卖单数量={len(orderbook.asks)}")
@@ -150,7 +150,7 @@ def test_market_data_collection():
                 print(f"  最佳卖价: {orderbook.asks[0].price}")
         
         print_subsection("成交记录测试")
-        trades = manager.market_collector.get_recent_trades(trading_pairs[:2])
+        trades = manager.market_collector.get_recent_trades(trading_pairs)
         print(f"获取到成交记录的交易对数量: {len(trades)}")
         for pair, trade_list in trades.items():
             print(f"{pair}: 成交记录数量={len(trade_list)}")
@@ -159,7 +159,7 @@ def test_market_data_collection():
                 print(f"  最新成交: 价格={latest_trade.price}, 数量={latest_trade.volume}")
         
         print_subsection("K线数据测试")
-        candles = manager.market_collector.get_candle_data(trading_pairs[:2], intervals[:2])
+        candles = manager.market_collector.get_candle_data(trading_pairs, intervals)
         print(f"获取到K线数据的交易对数量: {len(candles)}")
         for pair, intervals_data in candles.items():
             print(f"{pair}:")
@@ -191,7 +191,7 @@ def test_account_data_collection():
     try:
         manager = create_strategy_input_manager_from_config()
         config_manager = ConfigManager()
-        trading_pairs = config_manager.get_trading_pairs()[:3]
+        trading_pairs = config_manager.get_trading_pairs()
         
         print_subsection("现货余额测试")
         balances = manager.account_collector.get_spot_balances()
@@ -234,7 +234,7 @@ def test_order_data_collection():
     try:
         manager = create_strategy_input_manager_from_config()
         config_manager = ConfigManager()
-        trading_pairs = config_manager.get_trading_pairs()[:3]
+        trading_pairs = config_manager.get_trading_pairs()
         
         print_subsection("活跃订单测试")
         active_orders = manager.order_collector.get_active_orders(trading_pairs)
