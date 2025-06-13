@@ -33,6 +33,9 @@ from strategy_input import (
 # 加载环境变量
 load_dotenv()
 
+# 导入Gate.io API
+import gate_api
+
 def setup_logging():
     """设置日志配置"""
     logging.basicConfig(
@@ -423,6 +426,235 @@ def run_performance_test():
         print(f"❌ 性能测试失败: {e}")
         return False
 
+def update_trading_pairs_from_holdings():
+    """
+    从用户持有的代币更新交易对列表
+    
+    功能：
+    1. 获取用户现货账户余额
+    2. 提取持有的代币（数量>0）
+    3. 与USDT组成交易对
+    4. 验证交易对的有效性
+    5. 更新配置文件中的交易对列表
+    """
+    print_separator("从持有代币更新交易对列表")
+    
+    # 检查是否有API密钥
+    if not os.getenv("GATEIO_API_KEY"):
+        print("❌ 需要API密钥才能获取账户余额信息")
+        return False
+    
+    try:
+        # 创建管理器和配置管理器
+        manager = create_strategy_input_manager_from_config()
+        config_manager = ConfigManager("config.ini")
+        
+        print_subsection("获取账户余额")
+        
+        # 获取现货余额
+        balances = manager.account_collector.get_spot_balances()
+        print(f"获取到 {len(balances)} 种币的余额信息")
+        
+        # 提取持有的代币（余额>0，排除USDT）
+        held_currencies = []
+        for currency, balance in balances.items():
+            if balance.total > 0 and currency != 'USDT':
+                held_currencies.append(currency)
+                print(f"持有 {currency}: {balance.total}")
+        
+        if not held_currencies:
+            print("未发现除USDT外的其他持仓")
+            return True
+        
+        print(f"\n发现持有的代币: {held_currencies}")
+        
+        print_subsection("构建交易对列表")
+        
+        # 构建与USDT的交易对
+        potential_pairs = [f"{currency}_USDT" for currency in held_currencies]
+        print(f"潜在交易对: {potential_pairs}")
+        
+        # 验证交易对的有效性
+        valid_pairs = []
+        invalid_pairs = []
+        
+        print("验证交易对有效性...")
+        for pair in potential_pairs:
+            try:
+                # 尝试获取该交易对的行情数据来验证有效性
+                tickers = manager.market_collector.spot_api.list_tickers(currency_pair=pair)
+                if tickers and len(tickers) > 0 and tickers[0].last:
+                    ticker = tickers[0]
+                    valid_pairs.append(pair)
+                    print(f"✅ {pair} - 当前价格: {ticker.last}")
+                else:
+                    invalid_pairs.append(pair)
+                    print(f"❌ {pair} - 无效交易对")
+            except Exception as e:
+                invalid_pairs.append(pair)
+                print(f"❌ {pair} - 验证失败: {str(e)[:50]}")
+            
+            time.sleep(0.1)  # 避免API频率限制
+        
+        if not valid_pairs:
+            print("没有找到有效的交易对")
+            return False
+        
+        print_subsection("更新配置文件")
+        
+        # 获取当前配置的交易对
+        current_pairs = set(config_manager.get_trading_pairs())
+        print(f"当前配置的交易对: {current_pairs}")
+        
+        # 合并交易对（去重）
+        all_pairs = current_pairs.union(set(valid_pairs))
+        new_pairs = set(valid_pairs) - current_pairs
+        
+        print(f"新增交易对: {new_pairs}")
+        print(f"更新后交易对总数: {len(all_pairs)}")
+        
+        if new_pairs:
+            # 更新配置文件
+            pairs_str = ", ".join(sorted(all_pairs))
+            config_manager.update_config('trading', 'trading_pairs', pairs_str)
+            config_manager.save_config()
+            print(f"✅ 配置文件已更新")
+            print(f"最终交易对列表: {sorted(all_pairs)}")
+        else:
+            print("所有持有的代币交易对都已在配置中，无需更新")
+        
+        print_subsection("更新结果汇总")
+        print(f"持有的代币数量: {len(held_currencies)}")
+        print(f"有效交易对数量: {len(valid_pairs)}")
+        print(f"无效交易对数量: {len(invalid_pairs)}")
+        print(f"新增交易对数量: {len(new_pairs)}")
+        print(f"最终配置交易对数量: {len(all_pairs)}")
+        
+        if invalid_pairs:
+            print(f"\n⚠️  以下交易对无效或不存在:")
+            for pair in invalid_pairs:
+                print(f"  - {pair}")
+        
+        print("✅ 从持有代币更新交易对列表完成")
+        return True
+        
+    except Exception as e:
+        print(f"❌ 从持有代币更新交易对列表失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def get_holdings_summary():
+    """
+    获取持仓摘要信息
+    
+    功能：
+    1. 显示所有持有的代币及数量
+    2. 显示对应的USDT交易对状态
+    3. 提供持仓价值估算（如果可能）
+    """
+    print_separator("持仓摘要")
+    
+    # 检查是否有API密钥
+    if not os.getenv("GATEIO_API_KEY"):
+        print("❌ 需要API密钥才能获取账户余额信息")
+        return False
+    
+    try:
+        manager = create_strategy_input_manager_from_config()
+        config_manager = ConfigManager("config.ini")
+        
+        print_subsection("账户余额详情")
+        
+        # 获取现货余额
+        balances = manager.account_collector.get_spot_balances()
+        
+        # 分类显示
+        usdt_balance = None
+        other_holdings = {}
+        
+        for currency, balance in balances.items():
+            if balance.total > 0:
+                if currency == 'USDT':
+                    usdt_balance = balance
+                else:
+                    other_holdings[currency] = balance
+        
+        # 显示USDT余额
+        if usdt_balance:
+            print(f"💰 USDT余额: {usdt_balance.total}")
+            print(f"   可用: {usdt_balance.available}")
+            print(f"   冻结: {usdt_balance.locked}")
+        else:
+            print("💰 USDT余额: 0")
+        
+        # 显示其他代币持仓
+        if other_holdings:
+            print(f"\n🪙 其他代币持仓 ({len(other_holdings)} 种):")
+            
+            # 获取当前配置的交易对
+            current_pairs = set(config_manager.get_trading_pairs())
+            
+            for currency, balance in sorted(other_holdings.items()):
+                pair = f"{currency}_USDT"
+                in_config = "✅" if pair in current_pairs else "❌"
+                
+                print(f"   {currency}:")
+                print(f"     数量: {balance.total}")
+                print(f"     可用: {balance.available}")
+                print(f"     冻结: {balance.locked}")
+                print(f"     交易对: {pair} {in_config}")
+                
+                # 尝试获取当前价格
+                try:
+                    tickers = manager.market_collector.spot_api.list_tickers(currency_pair=pair)
+                    if tickers and len(tickers) > 0 and tickers[0].last:
+                        price = float(tickers[0].last)
+                        value = float(balance.total) * price
+                        print(f"     当前价格: {price} USDT")
+                        print(f"     估值: {value:.2f} USDT")
+                    else:
+                        print(f"     当前价格: 无法获取")
+                except:
+                    print(f"     当前价格: 无法获取")
+                
+                print()
+        else:
+            print("\n🪙 无其他代币持仓")
+        
+        print_subsection("配置状态")
+        current_pairs = config_manager.get_trading_pairs()
+        print(f"当前配置的交易对数量: {len(current_pairs)}")
+        print(f"配置的交易对: {current_pairs}")
+        
+        # 检查配置中的交易对是否都有对应持仓
+        configured_currencies = set()
+        for pair in current_pairs:
+            if '_USDT' in pair:
+                currency = pair.replace('_USDT', '')
+                configured_currencies.add(currency)
+        
+        held_currencies = set(other_holdings.keys())
+        
+        only_configured = configured_currencies - held_currencies
+        only_held = held_currencies - configured_currencies
+        
+        if only_configured:
+            print(f"\n⚠️  配置中但未持有的币种: {only_configured}")
+        
+        if only_held:
+            print(f"\n💡 持有但未配置的币种: {only_held}")
+            print("   可以运行 '更新交易对列表' 功能来自动添加")
+        
+        print("✅ 持仓摘要获取完成")
+        return True
+        
+    except Exception as e:
+        print(f"❌ 获取持仓摘要失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 def print_menu():
     """打印测试菜单"""
     print("\n" + "="*60)
@@ -436,7 +668,9 @@ def print_menu():
     print("6. 完整策略输入收集测试")
     print("7. 数据持久化测试")
     print("8. 性能测试")
-    print("9. 运行所有测试")
+    print("9. 从持有代币更新交易对列表")
+    print("10. 获取持仓摘要")
+    print("11. 运行所有测试")
     print("0. 退出")
     print("="*60)
 
@@ -452,7 +686,9 @@ def run_all_tests():
         ("订单数据收集测试", test_order_data_collection),
         ("完整策略输入收集测试", test_complete_strategy_input),
         ("数据持久化测试", test_data_persistence),
-        ("性能测试", run_performance_test)
+        ("性能测试", run_performance_test),
+        ("从持有代币更新交易对列表", update_trading_pairs_from_holdings),
+        ("获取持仓摘要", get_holdings_summary)
     ]
     
     results = []
@@ -507,7 +743,7 @@ def main():
     
     while True:
         print_menu()
-        choice = input("\n请选择测试项目 (0-9): ").strip()
+        choice = input("\n请选择测试项目 (0-11): ").strip()
         
         if choice == "0":
             print("退出测试程序")
@@ -529,9 +765,13 @@ def main():
         elif choice == "8":
             run_performance_test()
         elif choice == "9":
+            update_trading_pairs_from_holdings()
+        elif choice == "10":
+            get_holdings_summary()
+        elif choice == "11":
             run_all_tests()
         else:
-            print("❌ 无效选择，请输入 0-9")
+            print("❌ 无效选择，请输入 0-11")
         
         if choice != "0":
             input("\n按回车键继续...")

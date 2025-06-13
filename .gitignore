@@ -2,3 +2,4 @@
 gateapi-python
 __pycache__
 *.log
+config.ini
